@@ -114,22 +114,81 @@ Two properties worth noting:
 | **total** | **52 min** | **43 min** |
 | peak GPU memory (inference) | 58.7 GB | 73.6 GB |
 
+The quality table above was measured before the reference-view fix (the
+KV-cache inference path used to silently ignore `--num_views` neighbor images
+on single-GPU runs — see `model_training/pipeline/kv_cache_pipeline.py`).
+Re-measured after the fix, the direct 2D output on the DL3DV scene moves by
+less than 0.05 dB / 0.001 LPIPS, so the table stands; the decision matrix
+below uses post-fix numbers throughout. Peak-memory numbers in this table are
+`nvidia-smi` process totals; the matrix below reports the (slightly lower)
+torch-allocator peaks that `run_inference` now prints at the end of each run.
+
 If you already have a trained 3DGRUT splat, pass it via
 `--reconstruction_checkpoint` and the prepare stage drops to minutes (renders
 and captions only).
 
 ### What GPU do I need?
 
-| GPU | status |
-|---|---|
-| 80 GB (H100/A100-80G) | ✅ works up to ~1.3 MP inputs with the default fork settings (measured peaks 59–76 GB) |
-| 40–48 GB (A6000/L40S/A100-40G) | ❌ not currently — the measured peak at even 0.5 MP is 58.7 GB |
-| 24 GB (RTX 4090/3090) | ❌ not currently — the 14B weights alone are 28 GB in bf16 |
+Pick your row. Every configuration below is measured end to end on the same
+DL3DV benchmark scene (960×528 unless stated, 48-frame contiguous-gap holdout,
+seed 42), so quality, memory, and time are directly comparable. Quality is
+PSNR↑ / SSIM↑ / LPIPS↓ of the ArtiFixer 2D output against GT on the held-out
+gap, computed with `model_eval.metrics_utils` (LPIPS-VGG) — the base splat
+scores 19.61 / 0.737 / 0.235 on this stack. SSIM/LPIPS are therefore not
+comparable with the quality table above, which used a different SSIM/LPIPS
+implementation; PSNR is implementation-independent and matches. Time is the
+full `run_inference` wall clock, including ~1.5 min of checkpoint load.
 
-The path to smaller GPUs is FP8/quantized weights and caches (halves the 28 GB
-weights and both attention caches); this is on the fork's roadmap and would
-put ~0.5 MP inference within reach of 48 GB cards, with 24 GB cards needing
-additional offload. Contributions welcome.
+| GPU class | flags | max input | quality (gap) | measured peak | time |
+|---|---|---|---|---|---|
+| 80 GB (H100/A100-80G) | defaults (bf16, `--local_attn_size 8 --num_views 6`) | ~0.8 MP (≈3,200 tokens) | 24.05 / 0.759 / 0.174 | 56.3 GiB | 3m55s |
+| 48 GB (L40S/A6000) | `--transformer_quantization fp8` (same attention) | ~0.5 MP (≈2,300 tokens) | 24.04 / 0.759 / 0.174 | 40.7 GiB | 3m51s |
+| 24 GB (RTX 4090/3090) | `--transformer_quantization fp8 --local_attn_size 7 --num_views 1` | ≤640×352 (≈880 tokens) | 23.92 / 0.750 / 0.230* | 23.2 GiB alloc / 23.6 GiB reserved | 2m10s |
+
+*Measured against the same full-resolution GT (prediction upsampled from
+640×352), so the resolution loss is included; at its native 640×352 the same
+output scores 23.91 / 0.765 / 0.142.
+
+Notes:
+
+- **fp8 is quality-free at matched settings.** `--transformer_quantization
+  fp8` stores every transformer-block linear as `float8_e4m3fn` with
+  per-output-channel bf16 scales (native torch, no extra dependencies) and
+  removes ~15.5 GiB from the peak. On this benchmark it matches bf16 to
+  within 0.01 dB / 0.0003 LPIPS, and a second scene's frozen golden agrees
+  (ΔPSNR +0.07 dB, ΔLPIPS +0.005). The loader also quantizes layer by layer
+  from CPU, so the 28 GB bf16 model never touches the GPU.
+- **If you have headroom, spend it on the attention window.**
+  `--local_attn_size 21 --num_views 6` fits an 80 GB card at 0.5 MP
+  (75.9 GiB) and is the best-quality configuration we measured:
+  24.22 / 0.759 / 0.173. The paper-style `--local_attn_size 21 --num_views 12`
+  needs ~85 GiB at 0.5 MP and OOMs on an H100 (views8 also OOMs).
+- **The 24 GB row is honest but tight.** It was validated on an H100 under a
+  hard-enforced 24 GiB allocator budget (`--gpu_memory_budget_gb 24`, via
+  `torch.cuda.set_per_process_memory_fraction` — allocations beyond the
+  budget OOM exactly as on a smaller card; same VRAM arithmetic). Peak
+  reserved memory is 23.6 GiB, so a real 4090/3090 should run it headless
+  with little to spare; absolute wall-clock on consumer cards will differ.
+  Native/full-resolution inference remains 80 GB-only. Community validation
+  on real 24/48 GB cards is welcome.
+- **Why the window can't shrink below 8 (or 7).** The rolling KV cache holds
+  `--local_attn_size` latent frames and each autoregressive step writes
+  `--frames_per_block` (7) frames at once, so `local_attn_size < 7` is
+  structurally unsupported; at exactly 7 the cache holds only the current
+  block. Below the 24 GB row, memory can only be bought with smaller inputs.
+  fp8 KV/neighbor caches (not just weights) are the natural next step and
+  would put `--num_views 3 --local_attn_size 8` within the 24 GB budget;
+  contributions welcome.
+
+### Quality vs memory (one point per configuration)
+
+![quality vs memory](docs/benchmarks/quality_vs_memory.png)
+
+The measurements live in
+[`docs/benchmarks/dl3dv_config_sweep.json`](docs/benchmarks/dl3dv_config_sweep.json)
+(config, flags, PSNR/SSIM/LPIPS, peak GiB, wall seconds per point);
+[`docs/benchmarks/plot_quality_vs_memory.py`](docs/benchmarks/plot_quality_vs_memory.py)
+regenerates the figure from that JSON.
 
 ### Reproducing
 
@@ -148,8 +207,25 @@ python -m data_processing.run_artifixer3d --scene_root /data/prep/my_scene \
     --artifixer_frames_dir /data/out/my_scene/<...>/frames/batch_0000/pred
 ```
 
-Inputs above ~1.3 MP (≈3,200 patch tokens) exceed 80 GB with these settings;
-resize inputs so `(W/16)·(H/16) ≲ 3,200`.
+On a 48 GB card, add `--transformer_quantization fp8` and keep inputs at or
+below ~0.5 MP. On a 24 GB card, use the full 24 GB recipe (and images resized
+to 640×352 or smaller before COLMAP/prep):
+
+```bash
+python -m model_eval.run_inference --evalset reconstructed_colmap \
+    --checkpoint_pt $CHECKPOINT_PT \
+    --save_dir /data/out/my_scene --split_path /data/prep/my_scene_640/split.json \
+    --render_trajectory val_frames \
+    --transformer_quantization fp8 --local_attn_size 7 --num_views 1
+```
+
+To verify a memory claim without owning the smaller card, add
+`--gpu_memory_budget_gb <N>`: it hard-caps the process's usable GPU memory so
+any allocation past the budget fails exactly as it would on an N-GB card, and
+every run prints its peak allocated/reserved memory and wall time on exit.
+
+Inputs above ~0.8 MP (≈3,200 patch tokens) exceed 80 GB with the default
+settings; resize inputs so `(W/16)·(H/16) ≲ 3,200`.
 
 ## License and Contributions
 
