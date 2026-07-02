@@ -783,6 +783,14 @@ def main(args: argparse.Namespace, dataset_factory=create_dataset, output_dir_fa
     rank, world_size, local_rank = init_distributed(args.distributed_timeout_minutes)
     device = torch.device(f"cuda:{local_rank}")
 
+    if args.seed is not None:
+        # --seed comes from the shared training arg builder (default 42) but
+        # was never applied on the inference path upstream; apply it so
+        # sampling is deterministic by default. Same seed on every rank:
+        # CP ranks draw identical full tensors.
+        torch.manual_seed(args.seed)
+        torch.cuda.manual_seed_all(args.seed)
+
     try:
         if rank == 0:
             print(f"Running on {world_size} GPUs, evalset: {args.evalset}")
