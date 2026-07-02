@@ -51,7 +51,7 @@ from data_processing.threedgrut_training import DEFAULT_THREEDGRUT_CONFIG_DIR, t
 
 DEFAULT_THREEDGRUT_CONFIG = "apps/colmap_3dgut_sparse_mcmc"
 DEFAULT_TEXT_ENCODER_MODEL_ID = "Wan-AI/Wan2.1-T2V-14B-Diffusers"
-DEFAULT_CAPTIONING_MODEL_ID = "Qwen/Qwen3-VL-30B-A3B-Instruct"
+DEFAULT_CAPTIONING_MODEL_ID = "Qwen/Qwen3-VL-8B-Instruct"
 DEFAULT_CAPTION_FILENAME = "caption.h5"
 DEFAULT_RECON_SUBDIR = "reconstruction"
 DEFAULT_CAMERA_CONDITIONING_SCALE = 0.01
