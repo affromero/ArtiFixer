@@ -17,6 +17,7 @@ import gc
 import math
 import os
 import shutil
+import time
 from collections.abc import Sequence
 from datetime import timedelta
 from pathlib import Path
@@ -782,10 +783,33 @@ def process_items_with_context_parallel(
             pipe.transformer.disable_context_parallel()
 
 
+def apply_gpu_memory_budget(budget_gb: float, device: torch.device, rank: int) -> None:
+    """Hard-cap this process's usable GPU memory to validate smaller-GPU configs.
+
+    Uses torch.cuda.set_per_process_memory_fraction, so any allocation past the
+    budget raises OOM exactly as it would on a card of that size (minus the CUDA
+    context, which lives outside the caching allocator).
+    """
+    if budget_gb <= 0:
+        raise ValueError(f"--gpu_memory_budget_gb must be positive, got {budget_gb}")
+    total_gb = torch.cuda.get_device_properties(device).total_memory / (1024**3)
+    if budget_gb >= total_gb:
+        if rank == 0:
+            print(f"GPU memory budget {budget_gb:.1f} GB >= card total {total_gb:.1f} GB; no cap applied")
+        return
+    torch.cuda.set_per_process_memory_fraction(budget_gb / total_gb, device)
+    if rank == 0:
+        print(f"GPU memory budget: capped at {budget_gb:.1f} GB of {total_gb:.1f} GB")
+
+
 @torch.inference_mode()
 def main(args: argparse.Namespace, dataset_factory=create_dataset, output_dir_factory=get_output_dir):
+    run_start = time.perf_counter()
     rank, world_size, local_rank = init_distributed(args.distributed_timeout_minutes)
     device = torch.device(f"cuda:{local_rank}")
+
+    if args.gpu_memory_budget_gb is not None:
+        apply_gpu_memory_budget(args.gpu_memory_budget_gb, device, rank)
 
     if args.seed is not None:
         # --seed comes from the shared training arg builder (default 42) but
@@ -837,6 +861,13 @@ def main(args: argparse.Namespace, dataset_factory=create_dataset, output_dir_fa
         if rank == 0 and not args.save_frame_outputs_only:
             finalize_video_outputs(output_dir, fps=args.output_fps, replace=args.replace_if_exists)
 
+        peak_alloc_gb = torch.cuda.max_memory_allocated(device) / (1024**3)
+        peak_reserved_gb = torch.cuda.max_memory_reserved(device) / (1024**3)
+        print(
+            f"[rank {rank}] peak GPU memory: {peak_alloc_gb:.2f} GB allocated / "
+            f"{peak_reserved_gb:.2f} GB reserved; wall time: {time.perf_counter() - run_start:.1f} s"
+        )
+
         if rank == 0:
             print("Done!")
     finally:
@@ -871,6 +902,15 @@ def add_inference_args(parser: argparse.ArgumentParser) -> None:
         default=60,
         type=int,
         help="NCCL process-group timeout used by distributed eval barriers.",
+    )
+    parser.add_argument(
+        "--gpu_memory_budget_gb",
+        default=None,
+        type=float,
+        help="Testing utility: hard-cap this process's usable GPU memory via "
+        "torch.cuda.set_per_process_memory_fraction so smaller-GPU configs can be "
+        "validated on a larger card. Allocations beyond the cap raise OOM exactly "
+        "as they would on a card of that size.",
     )
     parser.add_argument(
         "--transformer_quantization",
