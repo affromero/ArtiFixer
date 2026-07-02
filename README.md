@@ -70,6 +70,87 @@ each new frame attends to the previously repaired ones — and the final
 ArtiFixer3D distillation enforces full multi-view consistency, which is what
 turns per-frame repairs into an actual 3D improvement.
 
+## Benchmarks on a Single GPU (this fork)
+
+The paper's protocol (full attention window, 12 reference views) was run on
+GB300-class GPUs and **does not fit an 80 GB H100**: at ~1.3 MP the KV cache
+alone is ~53 GB and the reference-view cross-attention cache another ~32 GB on
+top of 28 GB of bf16 weights. This fork's default settings
+(`--local_attn_size 8 --num_views 6`, deterministic seeding) bring the whole
+pipeline to **one H100** with no model changes. Numbers below are measured on
+a single 80 GB H100 (PCIe) with `artifixer:cuda12`.
+
+### Quality (public scenes, contiguous-gap holdout)
+
+A contiguous block of frames is held out to create a genuinely under-observed
+region (the off-trajectory setting ArtiFixer targets), the base 3DGRUT splat
+is trained on the rest, and the held-out frames are evaluated against GT.
+
+| scene | held out | arm | PSNR ↑ | SSIM ↑ | LPIPS ↓ |
+|---|---|---|---|---|---|
+| DL3DV `032dee9f…` (walking, 319 frames @ 960×528) | 48 frames | base splat | 19.61 | 0.724 | 0.177 |
+| | | **ArtiFixer3D** | **23.20** (+3.59) | **0.776** | **0.118** |
+| Mip-NeRF 360 `garden` (orbit, 185 frames @ 1104×720) | 28 frames | base splat | 27.58 | 0.850 | 0.135 |
+| | | **ArtiFixer3D** | **27.90** (+0.33) | **0.854** | **0.130** |
+
+Two properties worth noting:
+
+- **Gains scale with the reconstruction deficit.** The DL3DV walking capture
+  leaves the held-out region genuinely under-observed (worst view collapses to
+  ~15 dB of floaters and smearing) and ArtiFixer recovers it (+3.59 dB). The
+  garden orbit keeps the held-out region well covered by neighboring views, so
+  there is little to repair.
+- **A good reconstruction is not harmed.** On garden the refined scene is
+  slightly *better* than the base everywhere we measured — the opacity-mixing
+  conditioning preserves well-observed content.
+
+### Wall-clock and memory (one H100, end to end)
+
+| stage | DL3DV (0.5 MP) | garden (0.8 MP) |
+|---|---|---|
+| prepare (includes 10k-step base 3DGRUT training) | 22m43s | 22m23s |
+| ArtiFixer inference (14B, 4-step, auto-regressive) | 4m22s | 4m02s |
+| ArtiFixer3D distill (30k steps) | 25m03s | 16m42s |
+| **total** | **52 min** | **43 min** |
+| peak GPU memory (inference) | 58.7 GB | 73.6 GB |
+
+If you already have a trained 3DGRUT splat, pass it via
+`--reconstruction_checkpoint` and the prepare stage drops to minutes (renders
+and captions only).
+
+### What GPU do I need?
+
+| GPU | status |
+|---|---|
+| 80 GB (H100/A100-80G) | ✅ works up to ~1.3 MP inputs with the default fork settings (measured peaks 59–76 GB) |
+| 40–48 GB (A6000/L40S/A100-40G) | ❌ not currently — the measured peak at even 0.5 MP is 58.7 GB |
+| 24 GB (RTX 4090/3090) | ❌ not currently — the 14B weights alone are 28 GB in bf16 |
+
+The path to smaller GPUs is FP8/quantized weights and caches (halves the 28 GB
+weights and both attention caches); this is on the fork's roadmap and would
+put ~0.5 MP inference within reach of 48 GB cards, with 24 GB cards needing
+additional offload. Contributions welcome.
+
+### Reproducing
+
+```bash
+# any COLMAP scene: hold out a contiguous block to create the deficit
+python -m data_processing.prepare_colmap_artifixer_inputs \
+    --colmap_dir /path/to/scene --output_root /data/prep/my_scene \
+    --selected_image_names_file /path/to/train_subset.txt
+
+python -m model_eval.run_inference --evalset reconstructed_colmap \
+    --checkpoint_pt $CHECKPOINT_PT \
+    --save_dir /data/out/my_scene --split_path /data/prep/my_scene/split.json \
+    --render_trajectory val_frames --local_attn_size 8 --num_views 6
+
+python -m data_processing.run_artifixer3d --scene_root /data/prep/my_scene \
+    --artifixer_frames_dir /data/out/my_scene/<...>/frames/batch_0000/pred
+```
+
+Inputs above ~1.3 MP (≈3,200 patch tokens) exceed 80 GB with these settings;
+resize inputs so `(W/16)·(H/16) ≲ 3,200`.
+
 ## License and Contributions
 
 This project is released under the Apache License, Version 2.0. See [LICENSE](LICENSE).
