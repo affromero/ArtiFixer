@@ -35,6 +35,7 @@ from model_eval.checkpoint_loading import (
     validate_checkpoint_args,
 )
 from model_eval.datasets.dl3dv_hdf5_eval import DL3DVHDF5EvalDataset
+from model_eval.fp8 import quantize_transformer_blocks_fp8
 from model_eval.datasets.nerfbusters_eval import NerfbustersEvalDataset
 from model_eval.dl3dv_reconstruction_evalsets import (
     DL3DV_RECONSTRUCTION_EVALSETS,
@@ -329,19 +330,22 @@ def get_output_dir(args) -> Path:
     assert False, f"Invalid evalset: {args.evalset}"
 
 
-def get_eval_pipe(args: argparse.Namespace, device: torch.device):
+def get_eval_pipe(args: argparse.Namespace, device: torch.device, *, transformer_on_cpu: bool = False):
     if args.inference_pipeline == "bidirectional":
-        return (
-            get_pipe(
-                args,
-                load_pretrained_transformer_weights=False,
-                frames_per_block=None,
-                device=device,
-            )
-            .to(torch.bfloat16)
-            .to(device)
-        )
-    return get_kv_cache_pipe(args, device).to(torch.bfloat16).to(device)
+        pipe = get_pipe(
+            args,
+            load_pretrained_transformer_weights=False,
+            frames_per_block=None,
+            device=device,
+        ).to(torch.bfloat16)
+    else:
+        pipe = get_kv_cache_pipe(args, device).to(torch.bfloat16)
+    if transformer_on_cpu:
+        # The VAE is already on `device` (the pipe factories load it there);
+        # the transformer stays on CPU so it can be quantized before it ever
+        # occupies GPU memory at bf16 size.
+        return pipe
+    return pipe.to(device)
 
 
 def create_context_parallel_meshes(
@@ -795,13 +799,19 @@ def main(args: argparse.Namespace, dataset_factory=create_dataset, output_dir_fa
         if rank == 0:
             print(f"Running on {world_size} GPUs, evalset: {args.evalset}")
 
-        pipe = get_eval_pipe(args, device)
+        use_fp8 = args.transformer_quantization == "fp8"
+        pipe = get_eval_pipe(args, device, transformer_on_cpu=use_fp8)
         barrier_if_distributed()
 
         if rank == 0:
             print("Initialized pipeline")
 
         load_transformer_checkpoint(pipe.transformer, args)
+        if use_fp8:
+            num_quantized = quantize_transformer_blocks_fp8(pipe.transformer, device)
+            pipe.transformer.to(device)
+            if rank == 0:
+                print(f"Quantized {num_quantized} transformer-block linears to fp8 (weight-only)")
         pipe.transformer.eval()
 
         if rank == 0:
@@ -861,6 +871,16 @@ def add_inference_args(parser: argparse.ArgumentParser) -> None:
         default=60,
         type=int,
         help="NCCL process-group timeout used by distributed eval barriers.",
+    )
+    parser.add_argument(
+        "--transformer_quantization",
+        default="none",
+        choices=["none", "fp8"],
+        help="Weight-only quantization for the transformer blocks. 'fp8' stores every "
+        "nn.Linear weight inside the blocks as float8_e4m3fn with per-output-channel "
+        "bf16 scales, dequantized to bf16 on the fly (halves the 14B transformer "
+        "weight memory from ~28 GB to ~14 GB). The VAE, embeddings, norms, and "
+        "output projection stay bf16.",
     )
     parser.add_argument("--num_inference_steps", default=4, type=int)
     parser.add_argument("--frames_per_block", default=7, type=int)
