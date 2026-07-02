@@ -162,6 +162,11 @@ class ArtifixerKvCachePipeline(ArtifixerPipelineBase):
         else:
             prompt_embeds = self.get_t5_prompt_embeds(prompt).expand(batch_size, -1, -1)
 
+        # Keyword args from use_exit_flag onward: passing show_progress /
+        # progress_bar_leave positionally used to land show_progress on
+        # ignore_neighbors, silently dropping the reference views on any
+        # process with show_progress=True (i.e. rank 0 -- every single-GPU
+        # run). See generate_samples_from_batch's signature.
         return self.generate_samples_from_batch(
             condition,
             rendered_opacity,
@@ -173,9 +178,9 @@ class ArtifixerKvCachePipeline(ArtifixerPipelineBase):
             neighbor_Ks,
             prompt_embeds,
             num_inference_steps,
-            False,
-            show_progress,
-            progress_bar_leave,
+            use_exit_flag=False,
+            show_progress=show_progress,
+            progress_bar_leave=progress_bar_leave,
         )
 
     @torch.no_grad()
