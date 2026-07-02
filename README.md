@@ -20,6 +20,56 @@
 
 This repository provides the official implementation of ArtiFixer.
 
+## How ArtiFixer Works (at a glance)
+
+3D reconstructions (e.g. Gaussian Splatting) look great from viewpoints close
+to the capture trajectory — but step off that path and under-observed regions
+show up as holes, floaters, and smearing, because no camera ever saw them.
+ArtiFixer repairs exactly those regions with a video diffusion prior, then
+bakes the repairs back into the 3D scene:
+
+```mermaid
+flowchart TB
+    subgraph S1["1 · Reconstruct"]
+        A["📷 Casually captured video"] --> B["3D Gaussian Splatting scene"]
+    end
+
+    subgraph S2["2 · Diagnose"]
+        B --> C["Render target viewpoints:<br/>RGB + <b>opacity</b> per pixel"]
+        C --> D["Opacity ≈ 1<br/>✅ well-observed, keep it"]
+        C --> E["Opacity ≈ 0<br/>❌ hole — nothing was captured"]
+    end
+
+    subgraph S3["3 · Repair in 2D (ArtiFixer)"]
+        D --> F["🎬 Auto-regressive video diffusion<br/>(Wan 2.1, distilled to 4 steps)"]
+        E --> F
+        G["Nearby real frames<br/>(reference views)"] --> F
+        F --> H["Clean, plausible frames:<br/>faithful where observed,<br/>imagined where empty"]
+    end
+
+    subgraph S4["4 · Lift back to 3D (ArtiFixer3D)"]
+        H --> I["Distill repaired frames<br/>into the splat"]
+        B --> I
+        I --> J["🏠 Repaired 3D scene —<br/>consistent from any viewpoint"]
+    end
+```
+
+**The key idea — opacity mixing.** The renderer's own accumulated opacity is
+a free, per-pixel confidence map: it is high where the capture actually
+observed geometry and near zero inside holes. ArtiFixer conditions the
+diffusion model on both the rendered RGB *and* this opacity, so the model
+learns to **preserve** the reconstruction where it is trustworthy and to
+**generate** plausible content only where the reconstruction has nothing —
+smoothly interpolating between the two. Nearby real frames are attended to as
+references so the hallucinated content stays consistent with the scene.
+
+**Why the video model matters.** Fixing each frame independently produces
+plausible but *inconsistent* images (each frame invents a slightly different
+world). ArtiFixer generates frames auto-regressively along the camera path —
+each new frame attends to the previously repaired ones — and the final
+ArtiFixer3D distillation enforces full multi-view consistency, which is what
+turns per-frame repairs into an actual 3D improvement.
+
 ## License and Contributions
 
 This project is released under the Apache License, Version 2.0. See [LICENSE](LICENSE).
