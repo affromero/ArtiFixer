@@ -228,3 +228,6 @@ slurm-logs/
 *.out
 *.err
 *.png
+
+# Committed benchmark figures
+!docs/benchmarks/*.png
