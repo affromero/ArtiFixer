@@ -129,15 +129,19 @@ and captions only).
 
 ### What GPU do I need?
 
-Pick your row. Every configuration below is measured end to end on the same
-DL3DV benchmark scene (960×528 unless stated, 48-frame contiguous-gap holdout,
-seed 42), so quality, memory, and time are directly comparable. Quality is
-PSNR↑ / SSIM↑ / LPIPS↓ of the ArtiFixer 2D output against GT on the held-out
-gap, computed with `model_eval.metrics_utils` (LPIPS-VGG) — the base splat
-scores 19.61 / 0.737 / 0.235 on this stack. SSIM/LPIPS are therefore not
-comparable with the quality table above, which used a different SSIM/LPIPS
-implementation; PSNR is implementation-independent and matches. Time is the
-full `run_inference` wall clock, including ~1.5 min of checkpoint load.
+Pick your row. Every configuration below is measured end to end on the
+**same public scene as the quality table above** — DL3DV
+`032dee9f…` (960×528 unless stated, 48-frame contiguous-gap holdout, seed
+42) — so quality, memory, and time are directly comparable within this
+table. Quality is PSNR↑ / SSIM↑ / LPIPS↓ of the ArtiFixer **2D output**
+against GT on the held-out gap, computed with `model_eval.metrics_utils`
+(LPIPS-VGG). Two deliberate differences from the quality table above, which
+is why the numbers do not match row-for-row: (1) that table reports the final
+**ArtiFixer3D** result after 3D distillation, while this one isolates the 2D
+diffusion stage the GPU actually constrains; (2) its SSIM/LPIPS came from a
+different implementation stack. PSNR is implementation-independent — the
+base splat scores **19.61 dB in both tables**. Time is the full
+`run_inference` wall clock, including ~1.5 min of checkpoint load.
 
 The quality reference is the strongest configuration that fits an 80 GB card
 (`--local_attn_size 21 --num_views 6`, bf16) — every other row lists its
@@ -148,6 +152,7 @@ below).
 
 | GPU class | flags | max input | quality (gap) | Δ vs best | measured peak | time |
 |---|---|---|---|---|---|---|
+| — no ArtiFixer (base splat) | — | — | 19.61 / 0.737 / 0.235 | −4.61 dB | — | — |
 | 80 GB, max quality | bf16, `--local_attn_size 21 --num_views 6` | ~0.5 MP at these settings | **24.22 / 0.759 / 0.173** | reference | 75.9 GiB | 3m51s |
 | 80 GB (H100/A100-80G) | defaults (bf16, `--local_attn_size 8 --num_views 6`) | ~0.8 MP (≈3,200 tokens) | 24.05 / 0.759 / 0.174 | −0.17 dB / −0.000 / +0.001 | 56.3 GiB | 3m55s |
 | 48 GB (L40S/A6000) | `--transformer_quantization fp8` (same attention) | ~0.5 MP (≈2,300 tokens) | 24.04 / 0.759 / 0.174 | −0.18 dB / −0.000 / +0.001 | 40.7 GiB | 3m51s |
