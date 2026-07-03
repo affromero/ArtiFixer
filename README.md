@@ -156,9 +156,12 @@ below).
 *Measured against the same full-resolution GT (prediction upsampled from
 640×352), so the resolution loss is included — the LPIPS delta is dominated
 by resolution, not the model: at its native 640×352 the same output scores
-23.91 / 0.765 / 0.142. In short, stepping from the 80 GB reference all the
-way down to a 24 GB card costs **0.3 dB PSNR** on this scene, plus fine-detail
-sharpness from the smaller input.
+23.91 / 0.765 / 0.142, i.e. **−0.31 dB / +0.006 / −0.031 vs the reference**.
+(That comparison is cross-resolution — each side scored against GT at its own
+resolution — so the SSIM/LPIPS deltas flatter the low-res output: a 640×352
+GT simply has less fine detail to miss.) In short, stepping from the 80 GB
+reference all the way down to a 24 GB card costs **0.3 dB PSNR** on this
+scene, plus fine-detail sharpness from the smaller input.
 
 Notes:
 
