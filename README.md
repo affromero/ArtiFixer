@@ -139,15 +139,26 @@ comparable with the quality table above, which used a different SSIM/LPIPS
 implementation; PSNR is implementation-independent and matches. Time is the
 full `run_inference` wall clock, including ~1.5 min of checkpoint load.
 
-| GPU class | flags | max input | quality (gap) | measured peak | time |
-|---|---|---|---|---|---|
-| 80 GB (H100/A100-80G) | defaults (bf16, `--local_attn_size 8 --num_views 6`) | ~0.8 MP (≈3,200 tokens) | 24.05 / 0.759 / 0.174 | 56.3 GiB | 3m55s |
-| 48 GB (L40S/A6000) | `--transformer_quantization fp8` (same attention) | ~0.5 MP (≈2,300 tokens) | 24.04 / 0.759 / 0.174 | 40.7 GiB | 3m51s |
-| 24 GB (RTX 4090/3090) | `--transformer_quantization fp8 --local_attn_size 7 --num_views 1` | ≤640×352 (≈880 tokens) | 23.92 / 0.750 / 0.230* | 23.2 GiB alloc / 23.6 GiB reserved | 2m10s |
+The quality reference is the strongest configuration that fits an 80 GB card
+(`--local_attn_size 21 --num_views 6`, bf16) — every other row lists its
+measured gap to that reference. The paper-style configuration
+(`--local_attn_size 21 --num_views 12`) needs an estimated ~85 GiB and OOMs
+on 80 GB, so it cannot serve as a measurable reference here (see the plot
+below).
+
+| GPU class | flags | max input | quality (gap) | Δ vs best | measured peak | time |
+|---|---|---|---|---|---|---|
+| 80 GB, max quality | bf16, `--local_attn_size 21 --num_views 6` | ~0.5 MP at these settings | **24.22 / 0.759 / 0.173** | reference | 75.9 GiB | 3m51s |
+| 80 GB (H100/A100-80G) | defaults (bf16, `--local_attn_size 8 --num_views 6`) | ~0.8 MP (≈3,200 tokens) | 24.05 / 0.759 / 0.174 | −0.17 dB / −0.000 / +0.001 | 56.3 GiB | 3m55s |
+| 48 GB (L40S/A6000) | `--transformer_quantization fp8` (same attention) | ~0.5 MP (≈2,300 tokens) | 24.04 / 0.759 / 0.174 | −0.18 dB / −0.000 / +0.001 | 40.7 GiB | 3m51s |
+| 24 GB (RTX 4090/3090) | `--transformer_quantization fp8 --local_attn_size 7 --num_views 1` | ≤640×352 (≈880 tokens) | 23.92 / 0.750 / 0.230* | −0.30 dB / −0.009 / +0.057* | 23.2 GiB alloc / 23.6 GiB reserved | 2m10s |
 
 *Measured against the same full-resolution GT (prediction upsampled from
-640×352), so the resolution loss is included; at its native 640×352 the same
-output scores 23.91 / 0.765 / 0.142.
+640×352), so the resolution loss is included — the LPIPS delta is dominated
+by resolution, not the model: at its native 640×352 the same output scores
+23.91 / 0.765 / 0.142. In short, stepping from the 80 GB reference all the
+way down to a 24 GB card costs **0.3 dB PSNR** on this scene, plus fine-detail
+sharpness from the smaller input.
 
 Notes:
 
