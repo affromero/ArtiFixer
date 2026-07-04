@@ -686,7 +686,8 @@ def generate_caption(args: argparse.Namespace, paths: PreparedPaths) -> None:
         input_path=paths.eval_scene_dir,
         output_path=caption_path,
         dataset_downsample_factor=1,
-        captioning_model_id=DEFAULT_CAPTIONING_MODEL_ID,
+        frame_stride=args.captioning_frame_stride,
+        captioning_model_id=args.captioning_model_id,
         text_encoder_model_id=args.text_encoder_model_id,
     )
 
@@ -757,6 +758,17 @@ def build_parser() -> argparse.ArgumentParser:
         "--text_encoder_model_id",
         default=DEFAULT_TEXT_ENCODER_MODEL_ID,
         help="Wan text encoder model id used to store caption embeddings for ArtiFixer inference.",
+    )
+    parser.add_argument(
+        "--captioning_model_id",
+        default=DEFAULT_CAPTIONING_MODEL_ID,
+        help="Qwen VL model id used to caption prepared ArtiFixer frames.",
+    )
+    parser.add_argument(
+        "--captioning_frame_stride",
+        type=int,
+        default=1,
+        help="Frame stride used when Qwen captions the prepared trajectory.",
     )
     parser.add_argument(
         "--reconstruction_steps",

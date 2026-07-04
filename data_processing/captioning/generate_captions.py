@@ -23,7 +23,14 @@ from data_processing.scene_utils import (
 from diffusers.pipelines.wan.pipeline_wan import prompt_clean
 from PIL import Image
 from tqdm import tqdm
-from transformers import AutoTokenizer, Qwen3VLMoeForConditionalGeneration, Qwen3VLProcessor, UMT5EncoderModel
+from transformers import (
+    AutoConfig,
+    AutoTokenizer,
+    Qwen3VLForConditionalGeneration,
+    Qwen3VLMoeForConditionalGeneration,
+    Qwen3VLProcessor,
+    UMT5EncoderModel,
+)
 
 os.environ["HF_ENABLE_PARALLEL_LOADING"] = "YES"
 
@@ -72,7 +79,7 @@ VIDEO_PROMPT = """
 def generate_caption(
     image_paths: np.ndarray,
     fps: int,
-    model: Qwen3VLMoeForConditionalGeneration,
+    model: Qwen3VLForConditionalGeneration | Qwen3VLMoeForConditionalGeneration,
     processor: Qwen3VLProcessor,
 ) -> str:
     if len(image_paths) == 1:
@@ -111,6 +118,29 @@ def generate_caption(
     )
 
     return output_text[0]
+
+
+def load_caption_model(
+    captioning_model_id: str,
+    captioning_attn_implementation: str | None,
+) -> Qwen3VLForConditionalGeneration | Qwen3VLMoeForConditionalGeneration:
+    config = AutoConfig.from_pretrained(captioning_model_id)
+    if config.model_type == "qwen3_vl":
+        model_class = Qwen3VLForConditionalGeneration
+    elif config.model_type == "qwen3_vl_moe":
+        model_class = Qwen3VLMoeForConditionalGeneration
+    else:
+        raise ValueError(
+            f"Unsupported captioning model type {config.model_type!r} "
+            f"for {captioning_model_id!r}. Expected qwen3_vl or qwen3_vl_moe."
+        )
+
+    return model_class.from_pretrained(
+        captioning_model_id,
+        dtype="auto",
+        device_map="auto",
+        attn_implementation=captioning_attn_implementation,
+    )
 
 
 def generate_text_embedding(
@@ -233,13 +263,7 @@ def generate_caption_hdf5(
 
     images = np.stack(images)
 
-    caption_model = Qwen3VLMoeForConditionalGeneration.from_pretrained(
-        captioning_model_id,
-        dtype="auto",
-        device_map="auto",
-        attn_implementation=captioning_attn_implementation,
-    )
-
+    caption_model = load_caption_model(captioning_model_id, captioning_attn_implementation)
     processor = Qwen3VLProcessor.from_pretrained(captioning_model_id)
 
     caption_records: list[tuple[str, str, np.ndarray]] = []
