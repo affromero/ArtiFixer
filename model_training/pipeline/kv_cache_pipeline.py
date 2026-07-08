@@ -101,6 +101,7 @@ class ArtifixerKvCachePipeline(ArtifixerPipelineBase):
         negative_prompt: str | torch.Tensor | None = None,  # unused — KV-cache pipeline does not do CFG
         num_inference_steps: int = 4,
         text_guidance_scale: float = 5.0,  # unused — KV-cache pipeline does not do CFG
+        *,
         show_progress: bool = False,
         progress_bar_leave: bool = True,
         max_neighbors_per_encode: int | None = None,
@@ -123,9 +124,9 @@ class ArtifixerKvCachePipeline(ArtifixerPipelineBase):
             neighbor_Ks,
             prompt,
             num_inference_steps,
-            show_progress,
-            progress_bar_leave,
-            max_neighbors_per_encode,
+            show_progress=show_progress,
+            progress_bar_leave=progress_bar_leave,
+            max_neighbors_per_encode=max_neighbors_per_encode,
         )
         return self.decode_latents_to_video(latents)
 
@@ -142,6 +143,7 @@ class ArtifixerKvCachePipeline(ArtifixerPipelineBase):
         neighbor_Ks: torch.Tensor | None,
         prompt: str | torch.Tensor,
         num_inference_steps: int = 4,
+        *,
         show_progress: bool = False,
         progress_bar_leave: bool = True,
         max_neighbors_per_encode: int | None = None,

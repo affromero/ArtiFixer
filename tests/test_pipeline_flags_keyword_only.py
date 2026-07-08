@@ -20,7 +20,23 @@ PIPELINE_PATH = (
     / "kv_cache_pipeline.py"
 )
 
-KEYWORD_ONLY_FLAGS = ("ignore_neighbors", "show_progress", "progress_bar_leave")
+KEYWORD_ONLY_FLAGS = {
+    "generate_samples_from_batch": (
+        "ignore_neighbors",
+        "show_progress",
+        "progress_bar_leave",
+    ),
+    "denoise_to_latents": (
+        "show_progress",
+        "progress_bar_leave",
+        "max_neighbors_per_encode",
+    ),
+    "forward_inference": (
+        "show_progress",
+        "progress_bar_leave",
+        "max_neighbors_per_encode",
+    ),
+}
 
 
 def _find_function(tree: ast.Module, name: str) -> ast.FunctionDef:
@@ -31,18 +47,19 @@ def _find_function(tree: ast.Module, name: str) -> ast.FunctionDef:
 
 
 class TestPipelineFlagsKeywordOnly(unittest.TestCase):
-    def test_generate_samples_trailing_flags_are_keyword_only(self):
+    def test_trailing_flags_are_keyword_only(self):
         tree = ast.parse(PIPELINE_PATH.read_text())
-        func = _find_function(tree, "generate_samples_from_batch")
-        kwonly = {arg.arg for arg in func.args.kwonlyargs}
-        for name in KEYWORD_ONLY_FLAGS:
-            self.assertIn(
-                name,
-                kwonly,
-                f"{name} must be keyword-only: a positional call once bound "
-                "show_progress to ignore_neighbors, dropping the reference "
-                "views.",
-            )
+        for func_name, flags in KEYWORD_ONLY_FLAGS.items():
+            func = _find_function(tree, func_name)
+            kwonly = {arg.arg for arg in func.args.kwonlyargs}
+            for name in flags:
+                self.assertIn(
+                    name,
+                    kwonly,
+                    f"{func_name}: {name} must be keyword-only: a positional "
+                    "call once bound show_progress to ignore_neighbors, "
+                    "dropping the reference views.",
+                )
 
 
 if __name__ == "__main__":
