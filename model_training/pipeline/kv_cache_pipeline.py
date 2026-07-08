@@ -209,6 +209,10 @@ class ArtifixerKvCachePipeline(ArtifixerPipelineBase):
         encoded_prompt: torch.Tensor,
         num_inference_steps: int,
         use_exit_flag: bool,
+        # Keyword-only: trailing boolean flags must not bind positionally (a
+        # positional call once silently swapped show_progress into
+        # ignore_neighbors, dropping the reference views).
+        *,
         ignore_neighbors: bool = False,
         show_progress: bool = False,
         progress_bar_leave: bool = True,
